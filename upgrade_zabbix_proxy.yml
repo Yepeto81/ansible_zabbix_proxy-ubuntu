@@ -1,0 +1,76 @@
+---
+- hosts: zabbix_proxys
+  become: yes
+
+  vars:
+    zabbix_current_version: "6.4"
+    zabbix_target_version: "7.0"
+
+  tasks:
+    - name: Import Zabbix {{ zabbix_target_version }} GPG key
+      apt_key:
+        url: https://repo.zabbix.com/zabbix-official-repo.key
+        state: present
+    
+    - name: Update package lists
+      apt:
+        update_cache: yes
+  
+    - name: Stop Zabbix proxy
+      systemd:
+        name: zabbix-proxy
+        state: stopped
+
+    - name: Backup Zabbix configuration
+      archive:
+        path:
+          - /etc/zabbix/zabbix_proxy.conf
+          - /etc/zabbix/web/zabbix.conf.php
+        dest: /tmp/zabbix_backup.tar.gz
+
+    - name: Remove existing Zabbix repository
+      apt:
+        name: zabbix-release
+        state: absent
+
+    - name: Create Zabbix {{ zabbix_target_version }} repository file
+      copy:
+        content: |
+          deb https://repo.zabbix.com/zabbix/{{ zabbix_target_version }}/ubuntu/ jammy main
+        dest: /etc/apt/sources.list.d/zabbix.list
+        mode: '0644'
+
+    - name: Move zabbix.list.dpkg-dist to zabbix.list
+      command: mv /etc/apt/sources.list.d/zabbix.list.dpkg-dist /etc/apt/sources.list.d/zabbix.list
+      when: ansible_facts['files']['/etc/apt/sources.list.d/zabbix.list.dpkg-dist'] is defined
+
+    - name: Update package lists
+      apt:
+        update_cache: yes
+
+    - name: Update Zabbix packages
+      apt:
+        name:
+          - zabbix-server-mysql
+          - zabbix-frontend-php
+          - zabbix-agent
+          - zabbix-apache-conf
+          - zabbix-proxy-mysql
+        state: latest
+        update_cache: yes
+
+    - name: Restore Zabbix configuration
+      unarchive:
+        src: /tmp/zabbix_backup.tar.gz
+        dest: /etc/zabbix/
+        remote_src: yes
+
+    - name: Start Zabbix proxy
+      systemd:
+        name: zabbix-proxy
+        state: started
+        enabled: yes
+
+    - name: Update variable for current Zabbix version
+      set_fact:
+        zabbix_current_version: "{{ zabbix_target_version }}"
